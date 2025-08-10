@@ -1,11 +1,11 @@
 [Unit]
-Description=Friendly Network Detection Client
+Description=Open Friendly Network Detection Client
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/lib/fnd-client/service.py
+ExecStart=/usr/bin/python3 /usr/lib/open-friendly-net-detection-client/service.py
 Restart=on-failure
 User=root
 Group=root
@@ -14,7 +14,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/run/fnd /var/lib/fnd-client
+ReadWritePaths=/run/fnd /var/lib/open-friendly-net-detection-client
 RuntimeDirectory=fnd
 RuntimeDirectoryMode=0755
 

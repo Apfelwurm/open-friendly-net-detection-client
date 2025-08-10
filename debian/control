@@ -1,4 +1,4 @@
-Source: fnd-client
+Source: open-friendly-net-detection-client
 Section: net
 Priority: optional
 Maintainer: Apfelwurm <Alexander@volzit.de>
@@ -7,7 +7,7 @@ Standards-Version: 4.6.2
 Rules-Requires-Root: no
 Homepage: https://github.com/Apfelwurm/open-friendly-net-detection-client
 
-Package: fnd-client
+Package: open-friendly-net-detection-client
 Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}, python3, python3-yaml, python3-cryptography, python3-nacl
 Description: Friendly Network Detection client service

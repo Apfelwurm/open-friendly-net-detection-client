@@ -37,7 +37,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-CONFIG_PATH = '/etc/fnd-client/config.yaml'
+CONFIG_PATH = '/etc/open-friendly-net-detection-client/config.yaml'
 RUN_DIR = '/run/fnd'
 STATE_FILE = os.path.join(RUN_DIR, 'network_id')
 SOCKET_PATH = os.path.join(RUN_DIR, 'socket')
@@ -48,7 +48,7 @@ TCP_MAX_CERT_LEN = 4096
 MAGIC = b'FND1'
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(message)s')
-logger = logging.getLogger('fnd-client')
+logger = logging.getLogger('open-friendly-net-detection-client')
 
 @dataclass
 class NetworkConfig:

@@ -12,7 +12,7 @@ mkdir -p "$FND_RUN_DIR"
 if [ -n "$new_fnd_server_ip" ]; then
   echo "$new_fnd_server_ip" > "$FND_DHCP_IP_FILE".new
   mv "$FND_DHCP_IP_FILE".new "$FND_DHCP_IP_FILE"
-  systemctl kill -s SIGUSR1 fnd-client.service 2>/dev/null || true
+  systemctl kill -s SIGUSR1 open-friendly-net-detection-client.service 2>/dev/null || true
 fi
 
 exit 0

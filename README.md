@@ -13,7 +13,7 @@ A Debian-packaged system service that identifies the current "friendly" network 
 
 ## Architecture Overview
 
-1. Service starts and loads configuration from `/etc/fnd-client/config.yaml`.
+1. Service starts and loads configuration from `/etc/open-friendly-net-detection-client/config.yaml`.
 2. Opens UNIX domain socket (mode 0666; protocol read-only) and writes current state file.
 3. Optional: subscribes to rtnetlink groups for link / IPv4 address changes.
 4. On triggers (startup, signal, netlink event, interval expiry): build server candidate list (DHCP provided + fallbacks) and attempt reverse handshake sequentially.
@@ -27,7 +27,7 @@ A Debian-packaged system service that identifies the current "friendly" network 
 
 ## Configuration
 
-Example `/etc/fnd-client/config.yaml`:
+Example `/etc/open-friendly-net-detection-client/config.yaml`:
 
 ```yaml
 poll_interval_seconds: 900
@@ -46,7 +46,7 @@ networks:
 ## DHCP Integration
 
 The package installs:
-- `/etc/dhcp/dhclient-exit-hooks.d/fnd-client` (exit hook capturing the custom option)
+- `/etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client` (exit hook capturing the custom option)
 - `/etc/dhcp/dhclient.d/fnd.conf` (option definition: `option fnd-server-ip code 224 = ip-address;`)
 
 No manual edits to `dhclient.conf` are required. When DHCP leases are (re)bound, the exit hook writes the option value to `/run/fnd/dhcp_server_ip` and signals the service (SIGUSR1) to re-check.
@@ -54,7 +54,7 @@ No manual edits to `dhclient.conf` are required. When DHCP leases are (re)bound,
 
 ## Build & Packaging
 
-Debian packaging metadata under `fnd-client/debian/`. GitHub Actions workflow builds and publishes `.deb` releases from `main`. Dependabot keeps dependencies updated.
+Debian packaging metadata under `open-friendly-net-detection-client/debian/`. GitHub Actions workflow builds and publishes `.deb` releases from `main`. Dependabot keeps dependencies updated.
 
 Local build:
 

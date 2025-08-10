@@ -9,7 +9,7 @@ override_dh_auto_build:
 	python3 -m build --wheel --no-isolation || true
 
 override_dh_installsystemd:
-	dh_installsystemd --name=fnd-client --no-enable --no-start
+	dh_installsystemd --name=open-friendly-net-detection-client --no-enable --no-start
 
 override_dh_builddeb:
 	# Do the normal build (must leave artifacts in parent dir for dpkg tools)

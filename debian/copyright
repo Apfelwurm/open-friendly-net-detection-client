@@ -1,5 +1,5 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: fnd-client
+Upstream-Name: open-friendly-net-detection-client
 Source: https://github.com/Apfelwurm/open-friendly-net-detection-client
 
 Files: *
