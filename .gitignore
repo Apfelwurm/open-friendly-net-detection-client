@@ -14,14 +14,14 @@ dist/
 
 # Debian source/build dirs if created
 /debian/.debhelper/
-/debian/fnd-client/
+/debian/open-friendly-net-detection-client/
 /debian/files
 /debian/debhelper-build-stamp
 /debian/*.substvars
 
 # Local build output
 /dist/
-debian/fnd-client.debhelper.log
+debian/open-friendly-net-detection-client.debhelper.log
 debian/*.debhelper
 
 
