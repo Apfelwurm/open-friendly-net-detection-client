@@ -45,16 +45,12 @@ networks:
 
 ## DHCP Integration
 
-Append to `/etc/dhcp/dhclient.conf`:
+The package installs:
+- `/etc/dhcp/dhclient-exit-hooks.d/fnd-client` (exit hook capturing the custom option)
+- `/etc/dhcp/dhclient.d/fnd.conf` (option definition: `option fnd-server-ip code 224 = ip-address;`)
 
-```conf
-option fnd-server-ip code 224 = ip-address;
-request subnet-mask, broadcast-address, time-offset, routers,
-        domain-name, domain-name-servers, host-name, fnd-server-ip;
-script "/usr/lib/fnd-client/dhclient-hook.sh";
-```
+No manual edits to `dhclient.conf` are required. When DHCP leases are (re)bound, the exit hook writes the option value to `/run/fnd/dhcp_server_ip` and signals the service (SIGUSR1) to re-check.
 
-Hook script stores the IP in `/run/fnd/dhcp_server_ip` and signals the daemon (SIGUSR1) to re-check.
 
 ## Build & Packaging
 

@@ -8,12 +8,5 @@ export DH_OPTIONS
 override_dh_auto_build:
 	python3 -m build --wheel --no-isolation || true
 
-override_dh_auto_install:
-	install -D -m 0755 src/fnd_client/service.py debian/fnd-client/usr/lib/fnd-client/service.py
-	install -D -m 0755 scripts/dhclient-hook.sh debian/fnd-client/usr/lib/fnd-client/dhclient-hook.sh
-	install -D -m 0644 packaging/fnd-client.service debian/fnd-client/lib/systemd/system/fnd-client.service
-	install -D -m 0644 packaging/config.yaml debian/fnd-client/etc/fnd-client/config.yaml
-	install -d -m 0755 debian/fnd-client/var/lib/fnd-client
-
 override_dh_installsystemd:
 	dh_installsystemd --name=fnd-client --no-enable --no-start

@@ -1,4 +1,5 @@
 packaging/fnd-client.service lib/systemd/system/
 packaging/config.yaml etc/fnd-client/
 src/fnd_client/service.py usr/lib/fnd-client/
-scripts/dhclient-hook.sh usr/lib/fnd-client/
+scripts/dhclient-exit-hook /etc/dhcp/dhclient-exit-hooks.d/fnd-client
+packaging/dhclient-fnd.conf etc/dhcp/dhclient.d/fnd.conf
