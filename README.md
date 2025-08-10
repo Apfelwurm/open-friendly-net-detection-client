@@ -2,6 +2,9 @@
 
 A Debian-packaged system service that identifies the current "friendly" network via a cryptographically verified reverse handshake with configured FND servers. Exposes the detected network ID through a local UNIX domain socket for other applications.
 
+> ⚠️ **Notice**: This service was primarily built with GitHub Copilot assistance but includes extensive human adjustments and testing. While tested, there may be edge cases or issues that haven't been identified. **Always test in a non-production environment first** and ensure you have complete backups before running on production systems. There is jank in the code, feel free to PR :)
+
+
 ## Features
 
 - Configurable networks with associated server public keys (Ed25519) and optional fallback server IP list.
