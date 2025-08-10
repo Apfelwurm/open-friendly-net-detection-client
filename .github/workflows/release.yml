@@ -38,6 +38,6 @@ jobs:
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: open-friendly-net-detection-client ${{ steps.ver.outputs.version }}
-          files: "*.deb"
+          files: "dist_debian/*.deb"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
