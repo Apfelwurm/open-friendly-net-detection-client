@@ -17,7 +17,6 @@ jobs:
       - name: Install build deps
         run: sudo apt-get update && sudo apt-get install -y debhelper dh-python python3-all python3-setuptools python3-build
       - name: Build deb
-        working-directory: open-friendly-net-detection-client
         run: |
           debuild -us -uc
       - name: Capture artifact
@@ -28,7 +27,6 @@ jobs:
       - name: Derive version
         id: ver
         run: |
-          cd open-friendly-net-detection-client
           VER=$(grep -m1 '^open-friendly-net-detection-client' debian/changelog | awk '{print $2}' | tr -d '()')
           echo "version=$VER" >> $GITHUB_OUTPUT
       - name: Create Release
