@@ -24,7 +24,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
             name: debs
-            path: "*.deb"
+            path: "dist_debian/*.deb"
       - name: Derive version
         id: ver
         run: |

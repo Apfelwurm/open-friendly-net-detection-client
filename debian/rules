@@ -12,10 +12,11 @@ override_dh_installsystemd:
 	dh_installsystemd --name=fnd-client --no-enable --no-start
 
 override_dh_builddeb:
+	# Do the normal build (must leave artifacts in parent dir for dpkg tools)
 	dh_builddeb
-	# Move resulting artifacts into in-tree dist_debian for convenience
+	# Afterwards copy (not move) artifacts into in-tree dist_debian for convenience.
 	mkdir -p dist_debian
 	for f in ../*.deb ../*.changes ../*.buildinfo ../*.dsc ../*.tar.* ../*.orig.tar.*; do \
 		[ -e "$$f" ] || continue; \
-		mv "$$f" dist_debian/; \
+		cp -n "$$f" dist_debian/; \
 	done
