@@ -1,4 +1,4 @@
-# Friendly Network Detection (FND) Client
+# Open Friendly Network Detection (FND) Client
 
 A Debian-packaged system service that identifies the current "friendly" network via a cryptographically verified reverse handshake with configured FND servers. Exposes the detected network ID through a local UNIX domain socket for other applications.
 
