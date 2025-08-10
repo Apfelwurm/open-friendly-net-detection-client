@@ -3,3 +3,25 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Build artifacts
+*.deb
+*.build
+*.changes
+*.dsc
+*.tar.*
+*.buildinfo
+
+# Debian source/build dirs if created
+/debian/.debhelper/
+/debian/fnd-client/
+/debian/files
+/debian/debhelper-build-stamp
+/debian/*.substvars
+
+# Local build output
+/dist/
+debian/fnd-client.debhelper.log
+debian/*.debhelper
+
+

@@ -3,13 +3,13 @@ Section: net
 Priority: optional
 Maintainer: Apfelwurm <Alexander@volzit.de>
 Build-Depends: debhelper-compat (= 13), dh-python, python3, python3-all, python3-setuptools, python3-poetry-core | python3-build, python3-venv
-Standards-Version: 4.7.0
+Standards-Version: 4.6.2
 Rules-Requires-Root: no
 Homepage: https://github.com/Apfelwurm/open-friendly-net-detection-client
 
 Package: fnd-client
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, python3, python3-yaml, python3-cryptography, python3-pynacl
+Depends: ${misc:Depends}, ${python3:Depends}, python3, python3-yaml, python3-cryptography, python3-nacl
 Description: Friendly Network Detection client service
  A daemon that determines the current trusted network by verifying a
  cryptographic challenge-response with configured FND servers and exposes
