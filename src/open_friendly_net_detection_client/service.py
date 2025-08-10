@@ -47,6 +47,7 @@ UDP_SERVER_PORT = 32125
 TCP_MAX_CERT_LEN = 4096
 MAGIC = b'FND1'
 
+# Initial basic config; will be refined after loading user config (log level etc.)
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s %(message)s')
 logger = logging.getLogger('open-friendly-net-detection-client')
 
@@ -61,6 +62,7 @@ class Config:
     react_to_netlink: bool = True
     handshake_timeout_seconds: int = 10
     custom_dhcp_option: int = 224
+    log_level: str = 'INFO'
     networks: Dict[str, NetworkConfig] = field(default_factory=dict)
 
 _current_config: Config = Config()
@@ -80,20 +82,31 @@ def load_config():
         st = os.stat(CONFIG_PATH)
         if st.st_mtime == _config_mtime:
             return  # unchanged
+        logger.debug('Detected config mtime change; reloading %s', CONFIG_PATH)
         with open(CONFIG_PATH, 'r') as f:
             raw = yaml.safe_load(f) or {}
         networks = {}
         for name, ncfg in (raw.get('networks') or {}).items():
-            networks[name] = NetworkConfig(pubkey=ncfg['pubkey'], fallback_servers=ncfg.get('fallback_servers', []))
+            try:
+                networks[name] = NetworkConfig(pubkey=ncfg['pubkey'], fallback_servers=ncfg.get('fallback_servers', []))
+            except KeyError:
+                logger.warning('Skipping network %s due to missing keys', name)
         _current_config = Config(
             poll_interval_seconds=raw.get('poll_interval_seconds', 900),
             react_to_netlink=raw.get('react_to_netlink', True),
             handshake_timeout_seconds=raw.get('handshake_timeout_seconds', 10),
             custom_dhcp_option=raw.get('custom_dhcp_option', 224),
+            log_level=raw.get('log_level', raw.get('logging', {}).get('level', 'INFO')),
             networks=networks
         )
+        # Apply log level
+        level_name = _current_config.log_level.upper()
+        level = getattr(logging, level_name, logging.INFO)
+        logger.setLevel(level)
+        logger.info('Config reloaded (networks=%d, poll=%ss, timeout=%ss, log_level=%s)',
+                    len(_current_config.networks), _current_config.poll_interval_seconds,
+                    _current_config.handshake_timeout_seconds, level_name)
         _config_mtime = st.st_mtime
-        logger.info('Config reloaded')
     except FileNotFoundError:
         logger.warning('Config file missing %s', CONFIG_PATH)
     except Exception:
@@ -123,20 +136,24 @@ def set_network_id(nid: str):
 def build_server_candidates() -> List[str]:
     """Return ordered list of candidate server IPs (DHCP-discovered first)."""
     ips: List[str] = []
-    # 1. DHCP-provided address (if hook has written it)
+    dhcp_ip = None
     try:
         with open(DHCP_IP_FILE, 'r') as f:
-            ip = f.read().strip()
-            if ip:
-                ips.append(ip)
+            dhcp_ip = f.read().strip() or None
+            if dhcp_ip:
+                ips.append(dhcp_ip)
     except FileNotFoundError:
-        pass
+        logger.debug('No DHCP-provided server IP file (%s) yet', DHCP_IP_FILE)
+    if dhcp_ip:
+        logger.debug('DHCP provided server IP: %s', dhcp_ip)
     # 2. All unique fallback IPs from config
     with _config_lock:
-        for net in _current_config.networks.values():
+        for netname, net in _current_config.networks.items():
             for ip in net.fallback_servers:
                 if ip not in ips:
                     ips.append(ip)
+                    logger.debug('Added fallback IP %s (network %s)', ip, netname)
+    logger.debug('Built candidate server list: %s', ips)
     return ips
 
 
@@ -195,6 +212,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
       5. Verify signature & configured key; reply with SHA256(pubkey||nonce)
     Returns network id string on success else None.
     """
+    logger.debug('Starting reverse handshake with %s', candidate_ip)
     try:
         # Ephemeral listening socket for server callback
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -203,35 +221,44 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
         lsock_port = lsock.getsockname()[1]
         lsock.settimeout(_current_config.handshake_timeout_seconds)
         nonce = gen_nonce()
+        logger.debug('Listening on ephemeral TCP port %d (nonce %s)', lsock_port, nonce.hex()[:16])
         # Send UDP probe announcing where to connect back
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp.settimeout(_current_config.handshake_timeout_seconds)
         probe = MAGIC + struct.pack('!H', lsock_port) + nonce
         udp.sendto(probe, (candidate_ip, UDP_SERVER_PORT))
+        logger.debug('Sent UDP probe to %s:%d', candidate_ip, UDP_SERVER_PORT)
         udp.close()
         # Await server connection
         conn, addr = lsock.accept()
+        logger.debug('Accepted TCP callback from %s:%d', addr[0], addr[1])
         with conn:
             conn.settimeout(_current_config.handshake_timeout_seconds)
             if _recv_exact(conn, len(MAGIC)) != MAGIC:
+                logger.debug('Magic mismatch from %s', candidate_ip)
                 return None
             cert_bytes = _receive_certificate(conn)
             if not cert_bytes:
+                logger.debug('Failed to receive certificate from %s', candidate_ip)
                 return None
             sig = _recv_exact(conn, 64)  # Ed25519 signature size
             if not sig:
+                logger.debug('Failed to receive signature from %s', candidate_ip)
                 return None
             try:
                 cert = x509.load_der_x509_certificate(cert_bytes)
                 pubkey = cert.public_key()
             except Exception:
+                logger.debug('Certificate parsing error from %s', candidate_ip)
                 return None
             if not isinstance(pubkey, Ed25519PublicKey):  # enforce key type
+                logger.debug('Non-Ed25519 key from %s', candidate_ip)
                 return None
             pub_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
             try:
                 pubkey.verify(sig, nonce)
             except Exception:
+                logger.debug('Signature verification failed from %s', candidate_ip)
                 return None
             netname = verify_server_key(pub_bytes)
             if not netname:
@@ -239,8 +266,10 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
                 return None
             # Final acknowledgment (allows server to ensure freshness if desired)
             conn.sendall(hashlib.sha256(pub_bytes + nonce).digest())
+            logger.info('Reverse handshake success with %s (network %s)', candidate_ip, netname)
             return netname
     except socket.timeout:
+        logger.debug('Handshake timeout with %s', candidate_ip)
         return None
     except Exception as e:
         logger.debug('Reverse handshake error %s: %s', candidate_ip, e)
@@ -254,13 +283,19 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
 
 def attempt_detection():
     """Try all server candidates; set network id on first success else 'unknown'."""
+    logger.debug('Attempting detection cycle')
     load_config()
     candidates = build_server_candidates()
+    if not candidates:
+        logger.info('No server candidates available')
     for ip in candidates:
+        logger.debug('Trying candidate %s', ip)
         nid = perform_reverse_handshake(ip)
         if nid:
             set_network_id(nid)
+            logger.debug('Detection complete (matched %s)', nid)
             return
+    logger.info('All handshake attempts failed; network unknown')
     set_network_id('unknown')
 
 
@@ -271,24 +306,32 @@ def netlink_thread():
     RTMGRP_IPV4_IFADDR = 0x10
     nl = pysocket.socket(pysocket.AF_NETLINK, pysocket.SOCK_RAW, pysocket.NETLINK_ROUTE)
     nl.bind((0, RTMGRP_LINK | RTMGRP_IPV4_IFADDR))
+    logger.info('Netlink monitor thread started')
     while not _stop_event.is_set():
         try:
             data = nl.recv(65535)
             if not data:
                 continue
+            logger.debug('Netlink event (%d bytes)', len(data))
             attempt_detection()
         except Exception:
+            if not _stop_event.is_set():
+                logger.debug('Netlink error; retrying in 1s')
             time.sleep(1)
     nl.close()
+    logger.debug('Netlink monitor thread exiting')
 
 
 def periodic_thread():
     """Periodic trigger loop honoring configured poll interval."""
+    logger.info('Periodic thread started')
     while not _stop_event.is_set():
         with _config_lock:
             interval = _current_config.poll_interval_seconds
+        logger.debug('Periodic cycle (interval=%s)', interval)
         attempt_detection()
         _stop_event.wait(interval)
+    logger.debug('Periodic thread exiting')
 
 
 def socket_server_thread():
@@ -302,6 +345,7 @@ def socket_server_thread():
     srv.bind(SOCKET_PATH)
     os.chmod(SOCKET_PATH, 0o666)  # liberal perms; data is non-sensitive identifier
     srv.listen(5)
+    logger.info('Socket server listening at %s', SOCKET_PATH)
     while not _stop_event.is_set():
         try:
             conn, _ = srv.accept()
@@ -311,43 +355,51 @@ def socket_server_thread():
                 conn.sendall(nid.encode('utf-8') + b'\n')
             finally:
                 conn.close()
+            logger.debug('Served client (network_id=%s)', nid)
         except Exception:
             time.sleep(0.2)
     srv.close()
+    logger.debug('Socket server thread exiting')
 
 
 def handle_signal(signum, frame):  # noqa: ARG001 (frame unused)
     """Handle termination (SIGINT/SIGTERM) and manual retrigger (SIGUSR1)."""
     if signum in (signal.SIGINT, signal.SIGTERM):
+        logger.info('Received termination signal (%s); shutting down', signum)
         _stop_event.set()
     elif signum == signal.SIGUSR1:
+        logger.info('Received SIGUSR1: manual detection trigger')
         attempt_detection()
 
 
 def main():
     """Entry point: start threads, perform initial detection, then idle."""
+    logger.info('FND client starting (pid=%d)', os.getpid())
     load_config()
     publish_state()
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGUSR1, handle_signal)
     threads = [
-        threading.Thread(target=socket_server_thread, daemon=True),
-        threading.Thread(target=periodic_thread, daemon=True)
+        threading.Thread(target=socket_server_thread, daemon=True, name='socket-server'),
+        threading.Thread(target=periodic_thread, daemon=True, name='periodic')
     ]
     with _config_lock:
         if _current_config.react_to_netlink:
-            threads.append(threading.Thread(target=netlink_thread, daemon=True))
+            threads.append(threading.Thread(target=netlink_thread, daemon=True, name='netlink'))
     for t in threads:
         t.start()
+        logger.debug('Started thread %s', t.name)
     attempt_detection()
     try:
         while not _stop_event.is_set():
             time.sleep(1)
     finally:
         _stop_event.set()
+        logger.info('Shutting down threads')
         for t in threads:
             t.join(timeout=2)
+        logger.info('Exit complete')
 
 if __name__ == '__main__':
     main()

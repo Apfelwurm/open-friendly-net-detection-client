@@ -2,4 +2,5 @@ poll_interval_seconds: 900
 react_to_netlink: true
 handshake_timeout_seconds: 10
 custom_dhcp_option: 224
+log_level: "debug"
 networks: {}
