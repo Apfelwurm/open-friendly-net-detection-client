@@ -1,0 +1,41 @@
+name: Build & Release Debian Package
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y debhelper dh-python python3-all python3-setuptools python3-build
+      - name: Build deb
+        working-directory: fnd-client
+        run: |
+          debuild -us -uc
+      - name: Capture artifact
+        uses: actions/upload-artifact@v4
+        with:
+            name: debs
+            path: "*.deb"
+      - name: Derive version
+        id: ver
+        run: |
+          cd fnd-client
+          VER=$(grep -m1 '^fnd-client' debian/changelog | awk '{print $2}' | tr -d '()')
+          echo "version=$VER" >> $GITHUB_OUTPUT
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: fnd-client ${{ steps.ver.outputs.version }}
+          files: "*.deb"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

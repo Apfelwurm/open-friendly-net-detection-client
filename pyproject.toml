@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fnd-client"
+version = "0.1.0"
+description = "Friendly Network Detection client service"
+authors = [{name = "Apfelwurm", email = "Alexander@volzit.de"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyYAML",
+    "PyNaCl"
+]
+
+[project.scripts]
+fnd-client = "fnd_client.service:main"

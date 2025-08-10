@@ -1,0 +1,22 @@
+[Unit]
+Description=Friendly Network Detection Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/lib/fnd-client/service.py
+Restart=on-failure
+User=root
+Group=root
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/fnd /var/lib/fnd-client
+RuntimeDirectory=fnd
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
