@@ -1,4 +1,24 @@
 #!/usr/bin/env python3
+"""Friendly Network Detection (FND) client service.
+
+High-level flow:
+  * Loads configuration describing trusted networks and their server Ed25519 public keys.
+  * Exposes the currently detected network id via a UNIX domain socket and a state file.
+  * Discovers candidate server IPs from a custom DHCP option plus configured fallback lists.
+  * On triggers (startup, periodic timer, netlink interface/address change, or SIGUSR1) it
+    performs a reverse handshake with each candidate until one succeeds:
+       - Create ephemeral TCP listener
+       - Generate nonce; send UDP probe (MAGIC + listener port + nonce) to server port 32125
+       - Server connects back; sends MAGIC, DER Ed25519 certificate, signature over nonce
+       - Client validates signature & pinned public key; replies with hash(pubkey||nonce)
+       - Maps pubkey to network id and publishes result
+  * If no server validates, network id reverts to 'unknown'.
+
+Security decisions:
+  * Only server authenticity (no client auth) – acceptable for identifying friendly network.
+  * Ed25519 public key pinning (base64) in config; certificate acts only as key container.
+  * 32‑byte nonces with short lifetime defend against replay of prior signatures.
+"""
 import os
 import signal
 import socket
@@ -32,8 +52,8 @@ logger = logging.getLogger('fnd-client')
 
 @dataclass
 class NetworkConfig:
-    pubkey: str
-    fallback_servers: List[str] = field(default_factory=list)
+    pubkey: str  # Base64-encoded raw Ed25519 public key
+    fallback_servers: List[str] = field(default_factory=list)  # Static IPs if DHCP option absent
 
 @dataclass
 class Config:
@@ -45,20 +65,21 @@ class Config:
 
 _current_config: Config = Config()
 _current_network_id: str = 'unknown'
-_config_mtime: float = 0.0
+_config_mtime: float = 0.0  # Last loaded mtime to support on-the-fly reloads
 _stop_event = threading.Event()
-_nonce_store: Dict[bytes, float] = {}
+_nonce_store: Dict[bytes, float] = {}  # nonce -> creation timestamp
 _config_lock = threading.Lock()
 _state_lock = threading.Lock()
 selector = selectors.DefaultSelector()
 
 
 def load_config():
+    """Load (or reload) YAML configuration if it changed on disk."""
     global _current_config, _config_mtime
     try:
         st = os.stat(CONFIG_PATH)
         if st.st_mtime == _config_mtime:
-            return
+            return  # unchanged
         with open(CONFIG_PATH, 'r') as f:
             raw = yaml.safe_load(f) or {}
         networks = {}
@@ -80,6 +101,7 @@ def load_config():
 
 
 def publish_state():
+    """Atomically write current network id to state file for simple consumers."""
     with _state_lock:
         tmp = STATE_FILE + '.new'
         os.makedirs(RUN_DIR, exist_ok=True)
@@ -89,6 +111,7 @@ def publish_state():
 
 
 def set_network_id(nid: str):
+    """Update and publish network id if changed."""
     global _current_network_id
     with _state_lock:
         if nid != _current_network_id:
@@ -98,7 +121,9 @@ def set_network_id(nid: str):
 
 
 def build_server_candidates() -> List[str]:
+    """Return ordered list of candidate server IPs (DHCP-discovered first)."""
     ips: List[str] = []
+    # 1. DHCP-provided address (if hook has written it)
     try:
         with open(DHCP_IP_FILE, 'r') as f:
             ip = f.read().strip()
@@ -106,6 +131,7 @@ def build_server_candidates() -> List[str]:
                 ips.append(ip)
     except FileNotFoundError:
         pass
+    # 2. All unique fallback IPs from config
     with _config_lock:
         for net in _current_config.networks.values():
             for ip in net.fallback_servers:
@@ -115,16 +141,18 @@ def build_server_candidates() -> List[str]:
 
 
 def gen_nonce() -> bytes:
+    """Generate a fresh nonce and prune stale ones."""
     nonce = secrets.token_bytes(32)
     _nonce_store[nonce] = time.time()
     now = time.time()
-    for n, ts in _nonce_store.copy().items():  # remove stale
+    for n, ts in list(_nonce_store.items()):
         if now - ts > NONCE_VALID_SECS:
             _nonce_store.pop(n, None)
     return nonce
 
 
 def verify_server_key(pubkey_bytes: bytes) -> Optional[str]:
+    """Map a raw Ed25519 pubkey to configured network name if pinned."""
     pk_b64 = base64.b64encode(pubkey_bytes).decode('ascii')
     with _config_lock:
         for name, net in _current_config.networks.items():
@@ -135,6 +163,7 @@ def verify_server_key(pubkey_bytes: bytes) -> Optional[str]:
 # Helpers for reverse handshake
 
 def _recv_exact(sock: socket.socket, length: int) -> Optional[bytes]:
+    """Read exactly length bytes or return None if EOF/short."""
     data = b''
     while len(data) < length:
         chunk = sock.recv(length - len(data))
@@ -143,7 +172,9 @@ def _recv_exact(sock: socket.socket, length: int) -> Optional[bytes]:
         data += chunk
     return data
 
+
 def _receive_certificate(conn: socket.socket) -> Optional[bytes]:
+    """Receive length-prefixed (2B) DER certificate bytes with bounds checks."""
     hdr = _recv_exact(conn, 2)
     if not hdr:
         return None
@@ -154,18 +185,31 @@ def _receive_certificate(conn: socket.socket) -> Optional[bytes]:
 
 
 def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
+    """Execute reverse handshake with a single server IP.
+
+    Steps:
+      1. Open ephemeral TCP listener
+      2. Generate nonce and UDP probe (MAGIC + port + nonce) to server
+      3. Accept incoming TCP, validate MAGIC
+      4. Receive DER Ed25519 certificate + signature over nonce
+      5. Verify signature & configured key; reply with SHA256(pubkey||nonce)
+    Returns network id string on success else None.
+    """
     try:
+        # Ephemeral listening socket for server callback
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         lsock.bind(('', 0))
         lsock.listen(1)
         lsock_port = lsock.getsockname()[1]
         lsock.settimeout(_current_config.handshake_timeout_seconds)
         nonce = gen_nonce()
+        # Send UDP probe announcing where to connect back
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp.settimeout(_current_config.handshake_timeout_seconds)
         probe = MAGIC + struct.pack('!H', lsock_port) + nonce
         udp.sendto(probe, (candidate_ip, UDP_SERVER_PORT))
         udp.close()
+        # Await server connection
         conn, addr = lsock.accept()
         with conn:
             conn.settimeout(_current_config.handshake_timeout_seconds)
@@ -174,7 +218,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
             cert_bytes = _receive_certificate(conn)
             if not cert_bytes:
                 return None
-            sig = _recv_exact(conn, 64)
+            sig = _recv_exact(conn, 64)  # Ed25519 signature size
             if not sig:
                 return None
             try:
@@ -182,7 +226,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
                 pubkey = cert.public_key()
             except Exception:
                 return None
-            if not isinstance(pubkey, Ed25519PublicKey):
+            if not isinstance(pubkey, Ed25519PublicKey):  # enforce key type
                 return None
             pub_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
             try:
@@ -193,6 +237,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
             if not netname:
                 logger.info('Unknown server key from %s', candidate_ip)
                 return None
+            # Final acknowledgment (allows server to ensure freshness if desired)
             conn.sendall(hashlib.sha256(pub_bytes + nonce).digest())
             return netname
     except socket.timeout:
@@ -208,6 +253,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
 
 
 def attempt_detection():
+    """Try all server candidates; set network id on first success else 'unknown'."""
     load_config()
     candidates = build_server_candidates()
     for ip in candidates:
@@ -219,7 +265,7 @@ def attempt_detection():
 
 
 def netlink_thread():
-    # Minimal netlink listener for RTMGRP_LINK | RTMGRP_IPV4_IFADDR
+    """Background thread: listens for link / IPv4 address changes via netlink."""
     import socket as pysocket
     RTMGRP_LINK = 1
     RTMGRP_IPV4_IFADDR = 0x10
@@ -237,6 +283,7 @@ def netlink_thread():
 
 
 def periodic_thread():
+    """Periodic trigger loop honoring configured poll interval."""
     while not _stop_event.is_set():
         with _config_lock:
             interval = _current_config.poll_interval_seconds
@@ -245,7 +292,7 @@ def periodic_thread():
 
 
 def socket_server_thread():
-    # Provide result; use 0666 perms so clients can connect (UNIX sockets need write). Read-only semantic enforced by protocol.
+    """Serve current network id over a UNIX domain socket (one line per connection)."""
     if os.path.exists(SOCKET_PATH):
         try:
             os.remove(SOCKET_PATH)
@@ -253,7 +300,7 @@ def socket_server_thread():
             pass
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o666)
+    os.chmod(SOCKET_PATH, 0o666)  # liberal perms; data is non-sensitive identifier
     srv.listen(5)
     while not _stop_event.is_set():
         try:
@@ -269,7 +316,8 @@ def socket_server_thread():
     srv.close()
 
 
-def handle_signal(signum, frame):
+def handle_signal(signum, frame):  # noqa: ARG001 (frame unused)
+    """Handle termination (SIGINT/SIGTERM) and manual retrigger (SIGUSR1)."""
     if signum in (signal.SIGINT, signal.SIGTERM):
         _stop_event.set()
     elif signum == signal.SIGUSR1:
@@ -277,6 +325,7 @@ def handle_signal(signum, frame):
 
 
 def main():
+    """Entry point: start threads, perform initial detection, then idle."""
     load_config()
     publish_state()
     signal.signal(signal.SIGINT, handle_signal)
