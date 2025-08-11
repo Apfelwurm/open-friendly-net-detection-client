@@ -37,9 +37,10 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 try:  # Python >=3.8
-    from importlib.metadata import version as _pkg_version
+    from importlib.metadata import version as _pkg_version, distributions as _pkg_distributions
 except Exception:  # pragma: no cover
     _pkg_version = None
+    _pkg_distributions = lambda: []  # type: ignore
 
 CONFIG_PATH = '/etc/open-friendly-net-detection-client/config.yaml'
 RUN_DIR = '/run/fnd'
@@ -86,12 +87,34 @@ selector = selectors.DefaultSelector()
 # ---------------------------------------------------------------------------
 
 def get_running_version() -> str:
-    """Best-effort package version lookup for startup log."""
+    """Best-effort package version lookup for startup log.
+
+    Added debugging: when log level is DEBUG or env FND_DEBUG_LIST_PACKAGES=1,
+    enumerate visible installed distributions to aid diagnosing why version
+    metadata may not be available in production deployments.
+    """
     if _pkg_version is None:
         return 'unknown'
+    # Conditional enumeration
+    if os.environ.get('FND_DEBUG_LIST_PACKAGES') == '1' or logger.isEnabledFor(logging.DEBUG):
+        try:
+            names: List[str] = []
+            for dist in _pkg_distributions():  # type: ignore
+                try:
+                    meta = dist.metadata  # type: ignore[attr-defined]
+                    name = (meta.get('Name') or meta.get('name') or '').strip()
+                except Exception:
+                    name = ''
+                if name:
+                    names.append(name)
+            unique = sorted(set(names), key=str.lower)
+            logger.debug('Visible installed distributions (%d): %s', len(unique), ', '.join(unique))
+        except Exception as e:  # pragma: no cover
+            logger.debug('Failed to enumerate distributions: %s', e)
     try:
         return _pkg_version('open-friendly-net-detection-client')
-    except Exception:  # pragma: no cover
+    except Exception as e:  # pragma: no cover
+        logger.debug('Version lookup failed: %s', e)
         return 'unknown'
 
 
