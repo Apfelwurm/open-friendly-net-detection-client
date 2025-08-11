@@ -1,31 +1,43 @@
+open-friendly-net-detection-client (0.2.0) unstable; urgency=medium
+
+* BREAKING: Replace one-shot query UNIX socket with persistent streaming
+  socket. Clients now receive initial network id plus subsequent updates
+  (one line per change) without reconnecting.
+* Added subscriber broadcast mechanism and connection lifecycle handling.
+* Version bump to 0.2.0 to reflect protocol behavior change.
+* Fix dhclient exit hook install path (was placed in subdirectory and not executed).
+  Now installed directly as /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client.
+
+ -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 13:00:00 +0000
+
 open-friendly-net-detection-client (0.1.2) unstable; urgency=medium
 
-  * Added explicit version reporting on startup
-  * Fixed potential state file deadlock in network ID publishing
-  * Added detailed detection cycle start/end logging and cycle numbering
-  * Added handshake duration timing metrics for performance insight
-  * Improved periodic thread resilience and liveness monitoring
-  * Clarified logging levels so periodic cycles visible at INFO
-  * Enhanced error diagnostics for netlink and socket server threads
-  * Misc minor refactors for reliability
+* Added explicit version reporting on startup
+* Fixed potential state file deadlock in network ID publishing
+* Added detailed detection cycle start/end logging and cycle numbering
+* Added handshake duration timing metrics for performance insight
+* Improved periodic thread resilience and liveness monitoring
+* Clarified logging levels so periodic cycles visible at INFO
+* Enhanced error diagnostics for netlink and socket server threads
+* Misc minor refactors for reliability
 
  -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 12:30:00 +0000
 
 open-friendly-net-detection-client (0.1.1) unstable; urgency=medium
 
-  * Fixed periodic detection cycle continuing after successful handshake
-  * Improved netlink monitoring with better error handling and timeouts
-  * Enhanced state file synchronization with fsync for reliability
-  * Added robust socket server with proper timeout handling
-  * Improved thread monitoring and error reporting
-  * Added CAP_NET_RAW capability for better netlink support on Debian 12
-  * Enhanced logging with more visible periodic cycle information
-  * Fixed socket server cleanup on shutdown
+* Fixed periodic detection cycle continuing after successful handshake
+* Improved netlink monitoring with better error handling and timeouts
+* Enhanced state file synchronization with fsync for reliability
+* Added robust socket server with proper timeout handling
+* Improved thread monitoring and error reporting
+* Added CAP_NET_RAW capability for better netlink support on Debian 12
+* Enhanced logging with more visible periodic cycle information
+* Fixed socket server cleanup on shutdown
 
  -- Apfelwurm <Alexander@volzit.de>  Sun, 11 Aug 2025 12:00:00 +0000
 
 open-friendly-net-detection-client (0.1.0) unstable; urgency=medium
 
-  * Initial release.
+* Initial release.
 
  -- Apfelwurm <Alexander@volzit.de>  Sun, 10 Aug 2025 12:00:00 +0000

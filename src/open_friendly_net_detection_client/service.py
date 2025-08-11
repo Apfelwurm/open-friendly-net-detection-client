@@ -76,6 +76,9 @@ _stop_event = threading.Event()
 _nonce_store: Dict[bytes, float] = {}  # nonce -> creation timestamp
 _config_lock = threading.Lock()
 _state_lock = threading.Lock()
+# Subscribers (streaming socket clients) tracking
+_subscribers: List[socket.socket] = []
+_subscribers_lock = threading.Lock()
 selector = selectors.DefaultSelector()
 
 # ---------------------------------------------------------------------------
@@ -146,6 +149,27 @@ def publish_state():
         logger.debug('State file updated -> %s (%s)', _current_network_id, STATE_FILE)
 
 
+def _broadcast_network_id():
+    """Send current network id (newline terminated) to all streaming subscribers."""
+    line = (_current_network_id + '\n').encode('utf-8')
+    to_remove: List[socket.socket] = []
+    with _subscribers_lock:
+        for conn in list(_subscribers):
+            try:
+                conn.sendall(line)
+            except Exception as e:
+                logger.debug('Dropping subscriber (send error: %s)', e)
+                to_remove.append(conn)
+        for conn in to_remove:
+            try:
+                _subscribers.remove(conn)
+                conn.close()
+            except Exception:
+                pass
+    if to_remove:
+        logger.debug('Removed %d dead subscribers; active=%d', len(to_remove), len(_subscribers))
+
+
 def set_network_id(nid: str):
     """Update and publish network id if changed (fixed deadlock in previous version)."""
     global _current_network_id
@@ -155,9 +179,9 @@ def set_network_id(nid: str):
             logger.info('Network ID change: %s -> %s', _current_network_id, nid)
             _current_network_id = nid
             changed = True
-    # Publish outside lock to avoid re-entrancy deadlock (publish_state acquires lock)
     if changed:
         publish_state()
+        _broadcast_network_id()  # push update to streaming clients
     else:
         logger.debug('Network ID unchanged (%s)', _current_network_id)
 
@@ -385,44 +409,65 @@ def periodic_thread():
 
 
 def socket_server_thread():
-    """Serve current network id over a UNIX domain socket (one line per connection)."""
+    """Streaming UNIX domain socket: initial id then pushes on changes.
+
+    Protocol: Each client receives the current network id line immediately on
+    connect, and again each time it changes. Lines are UTF-8 with trailing \n.
+    """
     if os.path.exists(SOCKET_PATH):
         try:
             os.remove(SOCKET_PATH)
         except OSError:
             pass
-    
     os.makedirs(RUN_DIR, exist_ok=True)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o666)  # liberal perms; data is non-sensitive identifier
-    srv.listen(5)
-    srv.settimeout(1.0)  # Add timeout to allow clean shutdown
-    logger.info('Socket server listening at %s', SOCKET_PATH)
-    
+    os.chmod(SOCKET_PATH, 0o666)
+    srv.listen(20)
+    srv.settimeout(1.0)
+    logger.info('Streaming socket server listening at %s', SOCKET_PATH)
+
     while not _stop_event.is_set():
         try:
             conn, _ = srv.accept()
-            with _state_lock:
-                nid = _current_network_id
             try:
-                conn.settimeout(5.0)  # Client timeout
-                conn.sendall(nid.encode('utf-8') + b'\n')
-                logger.debug('Served client (network_id=%s)', nid)
+                conn.settimeout(10.0)
+                # Add to subscriber list
+                with _subscribers_lock:
+                    _subscribers.append(conn)
+                    logger.debug('Subscriber added (total=%d)', len(_subscribers))
+                # Immediately send current id
+                with _state_lock:
+                    current = _current_network_id
+                try:
+                    conn.sendall((current + '\n').encode('utf-8'))
+                except Exception as e:
+                    logger.debug('Immediate send failed, dropping subscriber: %s', e)
+                    with _subscribers_lock:
+                        if conn in _subscribers:
+                            _subscribers.remove(conn)
+                    conn.close()
             except Exception as e:
-                logger.debug('Error serving client: %s', e)
-            finally:
+                logger.debug('Error during new subscriber handling: %s', e)
                 try:
                     conn.close()
                 except Exception:
                     pass
         except socket.timeout:
-            continue  # Normal timeout, check _stop_event
+            continue
         except Exception as e:
             if not _stop_event.is_set():
-                logger.debug('Socket server error: %s', e)
+                logger.debug('Socket server accept error: %s', e)
                 time.sleep(0.2)
-    
+
+    # Shutdown: close all subscribers
+    with _subscribers_lock:
+        for conn in _subscribers:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _subscribers.clear()
     try:
         srv.close()
         os.remove(SOCKET_PATH)
