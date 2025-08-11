@@ -36,6 +36,10 @@ import hashlib
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+try:  # Python >=3.8
+    from importlib.metadata import version as _pkg_version
+except Exception:  # pragma: no cover
+    _pkg_version = None
 
 CONFIG_PATH = '/etc/open-friendly-net-detection-client/config.yaml'
 RUN_DIR = '/run/fnd'
@@ -73,6 +77,19 @@ _nonce_store: Dict[bytes, float] = {}  # nonce -> creation timestamp
 _config_lock = threading.Lock()
 _state_lock = threading.Lock()
 selector = selectors.DefaultSelector()
+
+# ---------------------------------------------------------------------------
+# Helpers / utilities
+# ---------------------------------------------------------------------------
+
+def get_running_version() -> str:
+    """Best-effort package version lookup for startup log."""
+    if _pkg_version is None:
+        return 'unknown'
+    try:
+        return _pkg_version('open-friendly-net-detection-client')
+    except Exception:  # pragma: no cover
+        return 'unknown'
 
 
 def load_config():
@@ -114,26 +131,35 @@ def load_config():
 
 
 def publish_state():
-    """Atomically write current network id to state file for simple consumers."""
+    """Atomically write current network id to state file for simple consumers.
+
+    NOTE: Caller must NOT already hold _state_lock (to avoid deadlock).
+    """
     with _state_lock:
         tmp = STATE_FILE + '.new'
         os.makedirs(RUN_DIR, exist_ok=True)
         with open(tmp, 'w') as f:
             f.write(_current_network_id + '\n')
-            f.flush()  # Ensure data is written
-            os.fsync(f.fileno())  # Force to disk
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, STATE_FILE)
-        logger.debug('Published state to %s: %s', STATE_FILE, _current_network_id)
+        logger.debug('State file updated -> %s (%s)', _current_network_id, STATE_FILE)
 
 
 def set_network_id(nid: str):
-    """Update and publish network id if changed."""
+    """Update and publish network id if changed (fixed deadlock in previous version)."""
     global _current_network_id
+    changed = False
     with _state_lock:
         if nid != _current_network_id:
+            logger.info('Network ID change: %s -> %s', _current_network_id, nid)
             _current_network_id = nid
-            logger.info('Network ID -> %s', nid)
-            publish_state()
+            changed = True
+    # Publish outside lock to avoid re-entrancy deadlock (publish_state acquires lock)
+    if changed:
+        publish_state()
+    else:
+        logger.debug('Network ID unchanged (%s)', _current_network_id)
 
 
 def build_server_candidates() -> List[str]:
@@ -216,6 +242,7 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
     Returns network id string on success else None.
     """
     logger.debug('Starting reverse handshake with %s', candidate_ip)
+    start_time = time.time()
     try:
         # Ephemeral listening socket for server callback
         lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -269,13 +296,13 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
                 return None
             # Final acknowledgment (allows server to ensure freshness if desired)
             conn.sendall(hashlib.sha256(pub_bytes + nonce).digest())
-            logger.info('Reverse handshake success with %s (network %s)', candidate_ip, netname)
+            logger.info('Reverse handshake success with %s (network %s) (%.2fs)', candidate_ip, netname, time.time()-start_time)
             return netname
     except socket.timeout:
-        logger.debug('Handshake timeout with %s', candidate_ip)
+        logger.debug('Handshake timeout with %s (%.2fs)', candidate_ip, time.time()-start_time)
         return None
     except Exception as e:
-        logger.debug('Reverse handshake error %s: %s', candidate_ip, e)
+        logger.debug('Reverse handshake error %s: %s (%.2fs)', candidate_ip, e, time.time()-start_time)
         return None
     finally:
         try:
@@ -286,24 +313,25 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
 
 def attempt_detection():
     """Try all server candidates; set network id on first success else 'unknown'."""
-    logger.debug('Starting detection cycle')
+    logger.info('Detection cycle start')
     load_config()
     candidates = build_server_candidates()
+    logger.debug('Candidate list (count=%d): %s', len(candidates), candidates)
     if not candidates:
-        logger.info('No server candidates available')
+        logger.warning('No server candidates available; setting unknown')
         set_network_id('unknown')
+        logger.info('Detection cycle end (no candidates)')
         return
-        
     for ip in candidates:
-        logger.debug('Trying candidate %s', ip)
+        logger.info('Attempting handshake with %s', ip)
         nid = perform_reverse_handshake(ip)
         if nid:
             set_network_id(nid)
-            logger.debug('Detection complete (matched %s)', nid)
+            logger.info('Detection cycle end (matched %s)', nid)
             return
     logger.info('All handshake attempts failed; network unknown')
     set_network_id('unknown')
-    logger.debug('Detection cycle finished')
+    logger.info('Detection cycle end (no match)')
 
 
 def netlink_thread():
@@ -340,21 +368,20 @@ def netlink_thread():
 def periodic_thread():
     """Periodic trigger loop honoring configured poll interval."""
     logger.info('Periodic thread started')
+    cycle = 0
     while not _stop_event.is_set():
         with _config_lock:
             interval = _current_config.poll_interval_seconds
-        logger.info('Starting periodic detection cycle (interval=%ss)', interval)
+        cycle += 1
+        logger.info('Periodic cycle #%d (interval=%ss)', cycle, interval)
         try:
             attempt_detection()
-            logger.info('Periodic detection completed, waiting %ss until next cycle', interval)
+            logger.info('Periodic cycle #%d complete; sleeping %ss', cycle, interval)
         except Exception as e:
-            logger.error('Error in periodic detection: %s', e)
-        
-        # Wait for the interval or until stop event is set
+            logger.exception('Periodic cycle #%d encountered error: %s', cycle, e)
         if _stop_event.wait(interval):
-            break  # Stop event was set during wait
-        logger.info('Periodic wait completed, starting next cycle')
-    logger.debug('Periodic thread exiting')
+            break
+    logger.info('Periodic thread exiting')
 
 
 def socket_server_thread():
@@ -416,7 +443,8 @@ def handle_signal(signum, frame):  # noqa: ARG001 (frame unused)
 
 def main():
     """Entry point: start threads, perform initial detection, then idle."""
-    logger.info('FND client starting (pid=%d)', os.getpid())
+    ver = get_running_version()
+    logger.info('FND client starting (pid=%d, version=%s)', os.getpid(), ver)
     load_config()
     publish_state()
     signal.signal(signal.SIGINT, handle_signal)
@@ -431,26 +459,24 @@ def main():
             threads.append(threading.Thread(target=netlink_thread, daemon=True, name='netlink'))
     for t in threads:
         t.start()
-        logger.info('Started thread: %s', t.name)
-    
+        logger.info('Started thread: %s (alive=%s)', t.name, t.is_alive())
     logger.info('Performing initial detection')
     attempt_detection()
-    logger.info('Initial detection complete, entering main loop')
-    
+    logger.info('Initial detection complete; entering main loop')
     try:
         while not _stop_event.is_set():
-            time.sleep(1)
-            # Periodically check if threads are still alive
+            time.sleep(5)
             for t in threads:
                 if not t.is_alive():
-                    logger.error('Thread %s has died!', t.name)
+                    logger.error('Thread %s unexpectedly stopped; marking for shutdown', t.name)
+                    _stop_event.set()
     finally:
         _stop_event.set()
         logger.info('Shutting down threads')
         for t in threads:
-            t.join(timeout=2)
+            t.join(timeout=3)
             if t.is_alive():
-                logger.warning('Thread %s did not shut down cleanly', t.name)
+                logger.warning('Thread %s did not terminate cleanly', t.name)
         logger.info('Exit complete')
 
 if __name__ == '__main__':

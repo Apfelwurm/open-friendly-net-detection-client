@@ -1,3 +1,16 @@
+open-friendly-net-detection-client (0.1.2) unstable; urgency=medium
+
+  * Added explicit version reporting on startup
+  * Fixed potential state file deadlock in network ID publishing
+  * Added detailed detection cycle start/end logging and cycle numbering
+  * Added handshake duration timing metrics for performance insight
+  * Improved periodic thread resilience and liveness monitoring
+  * Clarified logging levels so periodic cycles visible at INFO
+  * Enhanced error diagnostics for netlink and socket server threads
+  * Misc minor refactors for reliability
+
+ -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 12:30:00 +0000
+
 open-friendly-net-detection-client (0.1.1) unstable; urgency=medium
 
   * Fixed periodic detection cycle continuing after successful handshake
