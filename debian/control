@@ -10,6 +10,7 @@ Homepage: https://github.com/Apfelwurm/open-friendly-net-detection-client
 Package: open-friendly-net-detection-client
 Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}, python3, python3-yaml, python3-cryptography, python3-nacl
+Recommends: network-manager
 Description: Friendly Network Detection client service
  A daemon that determines the current trusted network by verifying a
  cryptographic challenge-response with configured FND servers and exposes

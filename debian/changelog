@@ -1,3 +1,12 @@
+open-friendly-net-detection-client (0.2.6) unstable; urgency=medium
+
+  * Update README to document NetworkManager dispatcher integration and deprecate
+    dhclient hooks.
+  * Packaging: add Recommends on network-manager to aid DHCP option capture via NM.
+  * Remove legacy dhclient hook and option files from repository.
+
+ -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 15:20:00 +0000
+
 open-friendly-net-detection-client (0.2.5) unstable; urgency=medium
 
   * Maintenance: bump version for postinst case/esac fix and service management stability.

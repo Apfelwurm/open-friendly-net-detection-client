@@ -46,18 +46,19 @@ networks:
     fallback_servers: ["192.168.50.5"]
 ```
 
-## DHCP Integration
+## DHCP Integration (NetworkManager)
 
-The package installs:
-- `/etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client` (exit hook capturing the custom option)
-- `/etc/dhcp/dhclient.d/fnd.conf` (option definition: `option fnd-server-ip code 224 = ip-address;`)
+This package integrates with NetworkManager via a dispatcher script to capture the custom DHCP option (default 224) and notify the service:
 
-No manual edits to `dhclient.conf` are required. When DHCP leases are (re)bound, the exit hook writes the option value to `/run/fnd/dhcp_server_ip` and signals the service (SIGUSR1) to re-check.
+- Installs `/etc/NetworkManager/dispatcher.d/50-ofnd-client`
+- On relevant events (up, dhcp4-change, down, etc.), it extracts option 224 via `nmcli` and writes it to `/run/fnd/dhcp_server_ip`, then signals the daemon (SIGUSR1) to re-check.
+- If NetworkManager is not present, DHCP option capture will not occur; the daemon will still function using configured `fallback_servers` and periodic detection.
 
+Legacy dhclient hooks are deprecated and no longer installed by this package. Any previously mis-installed files are cleaned up during upgrades. The legacy hook files have been removed from the repository.
 
 ## Build & Packaging
 
-Debian packaging metadata under `open-friendly-net-detection-client/debian/`. GitHub Actions workflow builds and publishes `.deb` releases from `main`. Dependabot keeps dependencies updated.
+Debian packaging metadata lives under `debian/`. GitHub Actions workflow builds and publishes `.deb` releases from `main`.
 
 Local build:
 

@@ -1,0 +1,45 @@
+#!/bin/sh
+# NetworkManager dispatcher script to capture custom DHCP option 224 (FND server IP)
+# Installed to: /etc/NetworkManager/dispatcher.d/50-ofnd-client
+# Args: $1 = interface name, $2 = action
+
+IFACE="$1"
+ACTION="$2"
+
+# Only act on events that could change DHCP options
+case "$ACTION" in
+  up|dhcp4-change|connectivity-change|reapply|hostname|pre-up|down|pre-down)
+    ;;
+  *)
+    exit 0
+    ;;
+ esac
+
+FND_RUN_DIR=/run/fnd
+FND_DHCP_IP_FILE="$FND_RUN_DIR/dhcp_server_ip"
+mkdir -p "$FND_RUN_DIR"
+
+VAL=""
+if command -v nmcli >/dev/null 2>&1; then
+  # Try machine-readable first
+  OPTS=$(nmcli -g IP4.DHCP.OPTION device show "$IFACE" 2>/dev/null || true)
+  VAL=$(printf '%s\n' "$OPTS" | awk -F'= *' 'tolower($1) ~ /(^|[^0-9])224([^0-9]|$)/ {print $2; exit}')
+  # Fallback to pretty output parsing
+  if [ -z "$VAL" ]; then
+    OPTS=$(nmcli device show "$IFACE" 2>/dev/null | sed -n 's/^\s*IP4\.DHCP\.OPTION\[[^]]*\]:\s*//p')
+    VAL=$(printf '%s\n' "$OPTS" | awk -F'= *' 'tolower($1) ~ /(^|[^0-9])224([^0-9]|$)/ {print $2; exit}')
+  fi
+fi
+
+if [ -n "$VAL" ]; then
+  echo "$VAL" > "$FND_DHCP_IP_FILE".new && mv "$FND_DHCP_IP_FILE".new "$FND_DHCP_IP_FILE"
+  systemctl kill -s SIGUSR1 open-friendly-net-detection-client.service 2>/dev/null || true
+else
+  # On link down, remove stale value and notify service
+  if [ "$ACTION" = "down" ] || [ "$ACTION" = "pre-down" ]; then
+    rm -f "$FND_DHCP_IP_FILE" 2>/dev/null || true
+    systemctl kill -s SIGUSR1 open-friendly-net-detection-client.service 2>/dev/null || true
+  fi
+fi
+
+exit 0

@@ -11,16 +11,22 @@ case "$1" in
     for legacy in \
       /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client/dhclient-exit-hook \
       /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client/dhclient-exit-hook \
+      /etc/dhcp/dhclient-exit-hooks.d/50-ofnd-client \
       /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client \
       /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
-      /etc/dhcp/dhclient.d/fnd.conf \
+      /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
       /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client
     do
       [ -e "$legacy" ] && rm -f -- "$legacy" 2>/dev/null || true
     done
     # Remove now-empty legacy directories (ignore errors)
     [ -d /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client ] && rmdir /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client 2>/dev/null || true
+    [ -d  /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client ] && rmdir /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client 2>/dev/null || true
     [ -d /etc/dhcp/dhclient.d/fnd.conf ] && rmdir /etc/dhcp/dhclient.d/fnd.conf 2>/dev/null || true
+    # Ensure NM dispatcher script is executable
+    if [ -f /etc/NetworkManager/dispatcher.d/50-ofnd-nm ]; then
+      chmod 0755 /etc/NetworkManager/dispatcher.d/50-ofnd-nm || true
+    fi
     ;;
   *) ;;
 esac
