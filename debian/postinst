@@ -2,45 +2,39 @@
 set -e
 
 # Maintainer script: postinst
-# Purpose: perform legacy cleanup of mis-installed dhclient exit hook paths.
-# This runs before debhelper-managed steps (#DEBHELPER# placeholder below).
+# Performs legacy cleanup of mis-installed dhclient exit hook paths, then lets
+# debhelper sections run, then enables/starts service.
 
-if [ "$1" = "configure" ]; then
+case "$1" in
+  configure)
     # Legacy incorrectly installed hook file paths / names to remove
     for legacy in \
-        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client/dhclient-exit-hook \
-        /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client/dhclient-exit-hook \
-        /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client \
-        /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
-        /etc/dhcp/dhclient.d/fnd.conf \
-        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client
+      /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client/dhclient-exit-hook \
+      /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client/dhclient-exit-hook \
+      /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client \
+      /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
+      /etc/dhcp/dhclient.d/fnd.conf \
+      /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client
     do
-        if [ -e "$legacy" ]; then
-            rm -f -- "$legacy" 2>/dev/null || true
-        fi
+      [ -e "$legacy" ] && rm -f -- "$legacy" 2>/dev/null || true
     done
-    # Remove now-empty legacy directory (ignore errors)
-    if [ -d /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client ]; then
-        rmdir /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client 2>/dev/null || true
-    fi
-    # Remove now-empty legacy directory (ignore errors)
-    if [ -d /etc/dhcp/dhclient.d/fnd.conf ]; then
-        rmdir /etc/dhcp/dhclient.d/fnd.conf 2>/dev/null || true
-    fi
-fi
+    # Remove now-empty legacy directories (ignore errors)
+    [ -d /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client ] && rmdir /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client 2>/dev/null || true
+    [ -d /etc/dhcp/dhclient.d/fnd.conf ] && rmdir /etc/dhcp/dhclient.d/fnd.conf 2>/dev/null || true
+    ;;
+  *) ;;
+esac
 
 #DEBHELPER#
 
-# Ensure systemd service is enabled and started (or restarted on upgrade)
+# Enable / start (or restart on upgrade) the systemd service
 if [ "$1" = "configure" ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-    # Enable (idempotent)
-    systemctl enable open-friendly-net-detection-client.service >/dev/null 2>&1 || true
-    # If upgrading (old version present in $2) restart; else start if not active
-    if [ -n "$2" ]; then
-        systemctl try-restart open-friendly-net-detection-client.service >/dev/null 2>&1 || true
-    else
-        systemctl start open-friendly-net-detection-client.service >/dev/null 2>&1 || true
-    fi
+  systemctl enable open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+  if [ -n "$2" ]; then
+    systemctl restart open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+  else
+    systemctl start open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+  fi
 fi
 
 exit 0
