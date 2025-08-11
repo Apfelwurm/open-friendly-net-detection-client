@@ -120,7 +120,10 @@ def publish_state():
         os.makedirs(RUN_DIR, exist_ok=True)
         with open(tmp, 'w') as f:
             f.write(_current_network_id + '\n')
+            f.flush()  # Ensure data is written
+            os.fsync(f.fileno())  # Force to disk
         os.replace(tmp, STATE_FILE)
+        logger.debug('Published state to %s: %s', STATE_FILE, _current_network_id)
 
 
 def set_network_id(nid: str):
@@ -283,11 +286,14 @@ def perform_reverse_handshake(candidate_ip: str) -> Optional[str]:
 
 def attempt_detection():
     """Try all server candidates; set network id on first success else 'unknown'."""
-    logger.debug('Attempting detection cycle')
+    logger.debug('Starting detection cycle')
     load_config()
     candidates = build_server_candidates()
     if not candidates:
         logger.info('No server candidates available')
+        set_network_id('unknown')
+        return
+        
     for ip in candidates:
         logger.debug('Trying candidate %s', ip)
         nid = perform_reverse_handshake(ip)
@@ -297,29 +303,38 @@ def attempt_detection():
             return
     logger.info('All handshake attempts failed; network unknown')
     set_network_id('unknown')
+    logger.debug('Detection cycle finished')
 
 
 def netlink_thread():
     """Background thread: listens for link / IPv4 address changes via netlink."""
-    import socket as pysocket
-    RTMGRP_LINK = 1
-    RTMGRP_IPV4_IFADDR = 0x10
-    nl = pysocket.socket(pysocket.AF_NETLINK, pysocket.SOCK_RAW, pysocket.NETLINK_ROUTE)
-    nl.bind((0, RTMGRP_LINK | RTMGRP_IPV4_IFADDR))
-    logger.info('Netlink monitor thread started')
-    while not _stop_event.is_set():
-        try:
-            data = nl.recv(65535)
-            if not data:
-                continue
-            logger.debug('Netlink event (%d bytes)', len(data))
-            attempt_detection()
-        except Exception:
-            if not _stop_event.is_set():
-                logger.debug('Netlink error; retrying in 1s')
-            time.sleep(1)
-    nl.close()
-    logger.debug('Netlink monitor thread exiting')
+    try:
+        import socket as pysocket
+        RTMGRP_LINK = 1
+        RTMGRP_IPV4_IFADDR = 0x10
+        nl = pysocket.socket(pysocket.AF_NETLINK, pysocket.SOCK_RAW, pysocket.NETLINK_ROUTE)
+        nl.bind((0, RTMGRP_LINK | RTMGRP_IPV4_IFADDR))
+        logger.info('Netlink monitor thread started')
+        while not _stop_event.is_set():
+            try:
+                nl.settimeout(1.0)  # Add timeout to allow clean shutdown
+                data = nl.recv(65535)
+                if not data:
+                    continue
+                logger.debug('Netlink event (%d bytes)', len(data))
+                attempt_detection()
+            except socket.timeout:
+                continue  # Normal timeout, check _stop_event
+            except Exception as e:
+                if not _stop_event.is_set():
+                    logger.warning('Netlink error: %s; retrying in 5s', e)
+                    time.sleep(5)
+        nl.close()
+        logger.debug('Netlink monitor thread exiting')
+    except Exception as e:
+        logger.error('Failed to start netlink monitoring: %s', e)
+        logger.info('Falling back to periodic-only monitoring')
+        # Continue running but without netlink monitoring
 
 
 def periodic_thread():
@@ -328,9 +343,17 @@ def periodic_thread():
     while not _stop_event.is_set():
         with _config_lock:
             interval = _current_config.poll_interval_seconds
-        logger.debug('Periodic cycle (interval=%s)', interval)
-        attempt_detection()
-        _stop_event.wait(interval)
+        logger.info('Starting periodic detection cycle (interval=%ss)', interval)
+        try:
+            attempt_detection()
+            logger.info('Periodic detection completed, waiting %ss until next cycle', interval)
+        except Exception as e:
+            logger.error('Error in periodic detection: %s', e)
+        
+        # Wait for the interval or until stop event is set
+        if _stop_event.wait(interval):
+            break  # Stop event was set during wait
+        logger.info('Periodic wait completed, starting next cycle')
     logger.debug('Periodic thread exiting')
 
 
@@ -341,24 +364,43 @@ def socket_server_thread():
             os.remove(SOCKET_PATH)
         except OSError:
             pass
+    
+    os.makedirs(RUN_DIR, exist_ok=True)
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
     os.chmod(SOCKET_PATH, 0o666)  # liberal perms; data is non-sensitive identifier
     srv.listen(5)
+    srv.settimeout(1.0)  # Add timeout to allow clean shutdown
     logger.info('Socket server listening at %s', SOCKET_PATH)
+    
     while not _stop_event.is_set():
         try:
             conn, _ = srv.accept()
             with _state_lock:
                 nid = _current_network_id
             try:
+                conn.settimeout(5.0)  # Client timeout
                 conn.sendall(nid.encode('utf-8') + b'\n')
+                logger.debug('Served client (network_id=%s)', nid)
+            except Exception as e:
+                logger.debug('Error serving client: %s', e)
             finally:
-                conn.close()
-            logger.debug('Served client (network_id=%s)', nid)
-        except Exception:
-            time.sleep(0.2)
-    srv.close()
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except socket.timeout:
+            continue  # Normal timeout, check _stop_event
+        except Exception as e:
+            if not _stop_event.is_set():
+                logger.debug('Socket server error: %s', e)
+                time.sleep(0.2)
+    
+    try:
+        srv.close()
+        os.remove(SOCKET_PATH)
+    except Exception:
+        pass
     logger.debug('Socket server thread exiting')
 
 
@@ -389,16 +431,26 @@ def main():
             threads.append(threading.Thread(target=netlink_thread, daemon=True, name='netlink'))
     for t in threads:
         t.start()
-        logger.debug('Started thread %s', t.name)
+        logger.info('Started thread: %s', t.name)
+    
+    logger.info('Performing initial detection')
     attempt_detection()
+    logger.info('Initial detection complete, entering main loop')
+    
     try:
         while not _stop_event.is_set():
             time.sleep(1)
+            # Periodically check if threads are still alive
+            for t in threads:
+                if not t.is_alive():
+                    logger.error('Thread %s has died!', t.name)
     finally:
         _stop_event.set()
         logger.info('Shutting down threads')
         for t in threads:
             t.join(timeout=2)
+            if t.is_alive():
+                logger.warning('Thread %s did not shut down cleanly', t.name)
         logger.info('Exit complete')
 
 if __name__ == '__main__':

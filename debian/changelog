@@ -1,3 +1,16 @@
+open-friendly-net-detection-client (0.1.1) unstable; urgency=medium
+
+  * Fixed periodic detection cycle continuing after successful handshake
+  * Improved netlink monitoring with better error handling and timeouts
+  * Enhanced state file synchronization with fsync for reliability
+  * Added robust socket server with proper timeout handling
+  * Improved thread monitoring and error reporting
+  * Added CAP_NET_RAW capability for better netlink support on Debian 12
+  * Enhanced logging with more visible periodic cycle information
+  * Fixed socket server cleanup on shutdown
+
+ -- Apfelwurm <Alexander@volzit.de>  Sun, 11 Aug 2025 12:00:00 +0000
+
 open-friendly-net-detection-client (0.1.0) unstable; urgency=medium
 
   * Initial release.
