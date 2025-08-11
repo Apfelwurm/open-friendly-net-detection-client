@@ -1,0 +1,33 @@
+#!/bin/sh
+set -e
+
+# Maintainer script: postinst
+# Purpose: perform legacy cleanup of mis-installed dhclient exit hook paths.
+# This runs before debhelper-managed steps (#DEBHELPER# placeholder below).
+
+if [ "$1" = "configure" ]; then
+    # Legacy incorrectly installed hook file paths / names to remove
+    for legacy in \
+        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client/dhclient-exit-hook \
+        /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client/dhclient-exit-hook \
+        /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client \
+        /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
+        /etc/dhcp/dhclient.d/fnd.conf \
+        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client; do
+        if [ -e "$legacy" ]; then
+            rm -f "$legacy" 2>/dev/null || true
+        fi
+    done
+    # Remove now-empty legacy directory (ignore errors)
+    if [ -d /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client ]; then
+        rmdir /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client 2>/dev/null || true
+    fi
+    # Remove now-empty legacy directory (ignore errors)
+    if [ -d /etc/dhcp/dhclient.d/fnd.conf ]; then
+        rmdir /etc/dhcp/dhclient.d/fnd.conf 2>/dev/null || true
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0
