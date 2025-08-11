@@ -1,3 +1,11 @@
+open-friendly-net-detection-client (0.2.2) unstable; urgency=medium
+
+  * Correct dhclient exit hook installation path/filename (install as
+    /etc/dhcp/dhclient-exit-hooks.d/50-ofnd-client exactly, not as a
+    directory). Patch release.
+
+ -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 14:00:00 +0000
+
 open-friendly-net-detection-client (0.2.1) unstable; urgency=medium
 
   * Add debugging to enumerate installed distributions when determining

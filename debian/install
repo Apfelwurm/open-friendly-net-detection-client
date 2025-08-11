@@ -1,6 +1,6 @@
 packaging/open-friendly-net-detection-client.service lib/systemd/system/
 packaging/config.yaml etc/open-friendly-net-detection-client/
 src/open_friendly_net_detection_client/service.py usr/lib/open-friendly-net-detection-client/
-# Install dhclient exit hook directly (no subdirectory) so dhclient executes it
-scripts/dhclient-exit-hook etc/dhcp/dhclient-exit-hooks.d/50-fnd-client
+# Install dhclient exit hook directly as file 50-fnd-client (no trailing slash)
+scripts/50-ofnd-client etc/dhcp/dhclient-exit-hooks.d/
 packaging/dhclient-fnd.conf etc/dhcp/dhclient.d/fnd.conf

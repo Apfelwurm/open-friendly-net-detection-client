@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-friendly-net-detection-client"
-version = "0.2.1"
+version = "0.2.2"
 description = "Friendly Network Detection client service"
 authors = [{name = "Apfelwurm", email = "Alexander@volzit.de"}]
 license = {text = "MIT"}
