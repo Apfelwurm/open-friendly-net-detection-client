@@ -12,12 +12,12 @@ A Debian-packaged system service that identifies the current "friendly" network 
 - Rtnetlink monitoring to trigger re-detection on network changes (configurable).
 - Periodic polling cadence (configurable).
 - Reverse handshake: client sends UDP probe with ephemeral TCP listen port + nonce, server connects back presenting X.509 (Ed25519) certificate and signature over nonce. Client validates and maps to network id.
-- Atomic publication of network id to `/run/fnd/network_id` and single-line response service on UNIX socket `/run/fnd/socket`.
+- Atomic publication of network id to `/run/fnd/network_id` and streaming UNIX socket `/run/fnd/socket` (persistent connection: initial line + subsequent updates).
 
 ## Architecture Overview
 
 1. Service starts and loads configuration from `/etc/open-friendly-net-detection-client/config.yaml`.
-2. Opens UNIX domain socket (mode 0666; protocol read-only) and writes current state file.
+2. Opens UNIX domain socket (mode 0666; read-only streaming protocol) and writes current state file.
 3. Optional: subscribes to rtnetlink groups for link / IPv4 address changes.
 4. On triggers (startup, signal, netlink event, interval expiry): build server candidate list (DHCP provided + fallbacks) and attempt reverse handshake sequentially.
 5. First successful handshake sets the current network id. Failure of all candidates sets `unknown`.
@@ -67,7 +67,22 @@ debuild -us -uc
 
 ## Socket Protocol
 
-Connecting to the UNIX socket returns a single line: the network id or `unknown` then closes.
+The UNIX domain socket `/run/fnd/socket` provides a persistent streaming feed:
+
+Behavior:
+- On connect: server immediately sends the current network id followed by `\n`.
+- On every subsequent change: a new line with the updated id is sent.
+- Connection remains open until the client closes it or the service shuts down.
+- Lines are UTF-8; possible values are configured network names or `unknown`.
+
+Example usage:
+
+```bash
+# Follow current network id changes
+socat - UNIX-CONNECT:/run/fnd/socket
+```
+
+Non-streaming (legacy) behavior is no longer supported as of version 0.2.0.
 
 ## License
 
