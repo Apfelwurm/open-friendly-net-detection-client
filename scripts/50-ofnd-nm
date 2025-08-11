@@ -1,10 +1,26 @@
 #!/bin/sh
-# NetworkManager dispatcher script to capture custom DHCP option 224 (FND server IP)
-# Installed to: /etc/NetworkManager/dispatcher.d/50-ofnd-client
+# NetworkManager dispatcher script to capture custom DHCP option (default 224)
+# Installed to: /etc/NetworkManager/dispatcher.d/50-ofnd-nm
 # Args: $1 = interface name, $2 = action
 
 IFACE="$1"
 ACTION="$2"
+
+log() {
+  [ "${OFND_DEBUG:-0}" = "1" ] || return 0
+  logger -t ofnd-dispatcher "[$$] $*"
+}
+
+# Determine DHCP option number
+FND_OPT="${OFND_DHCP_OPTION:-}"
+if [ -z "$FND_OPT" ]; then
+  CFG=/etc/open-friendly-net-detection-client/config.yaml
+  if [ -r "$CFG" ]; then
+    # parse custom_dhcp_option: <num>
+    FND_OPT=$(sed -n 's/^[[:space:]]*custom_dhcp_option[[:space:]]*:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$CFG" | head -n1)
+  fi
+fi
+[ -n "$FND_OPT" ] || FND_OPT=224
 
 # Only act on events that could change DHCP options
 case "$ACTION" in
@@ -19,25 +35,149 @@ FND_RUN_DIR=/run/fnd
 FND_DHCP_IP_FILE="$FND_RUN_DIR/dhcp_server_ip"
 mkdir -p "$FND_RUN_DIR"
 
+# Extract first value for option N from nmcli output lines
+extract_opt_n() {
+  awk -v onum="$FND_OPT" '
+    function trim(s){ sub(/^[[:space:]]+/,"",s); sub(/[[:space:]]+$/,"",s); return s }
+    {
+      l=tolower($0)
+      r = "(^|[^0-9])" onum "([^0-9]|$)"
+      if (l ~ r) {
+        if (match($0, /=+[[:space:]]*([^[:space:],]+)/, m)) { print m[1]; exit }
+        if (match($0, /:+[[:space:]]*([^[:space:],]+)/, m)) { print m[1]; exit }
+        if (match($0, /\"(0x[0-9a-fA-F]+|[0-9.]+)\"/, m)) { print m[1]; exit }
+        v=$NF; gsub(/^\"|\"$/, "", v); v=trim(v); gsub(/,$/, "", v); print v; exit
+      }
+    }
+  '
+}
+
+# Convert 0xAABBCCDD to dotted IPv4
+maybe_convert_hex() {
+  VAL="$1"
+  case "$VAL" in
+    0x????????)
+      H=${VAL#0x}
+      b1=${H%??????}; r1=${H#??}
+      b2=${r1%????}; r2=${r1#??}
+      b3=${r2%??}; b4=${r2#??}
+      printf '%d.%d.%d.%d\n' $((16#${b1})) $((16#${b2})) $((16#${b3})) $((16#${b4}))
+      ;;
+    *)
+      printf '%s\n' "$VAL"
+      ;;
+  esac
+}
+
 VAL=""
-if command -v nmcli >/dev/null 2>&1; then
-  # Try machine-readable first
-  OPTS=$(nmcli -g IP4.DHCP.OPTION device show "$IFACE" 2>/dev/null || true)
-  VAL=$(printf '%s\n' "$OPTS" | awk -F'= *' 'tolower($1) ~ /(^|[^0-9])224([^0-9]|$)/ {print $2; exit}')
-  # Fallback to pretty output parsing
-  if [ -z "$VAL" ]; then
-    OPTS=$(nmcli device show "$IFACE" 2>/dev/null | sed -n 's/^\s*IP4\.DHCP\.OPTION\[[^]]*\]:\s*//p')
-    VAL=$(printf '%s\n' "$OPTS" | awk -F'= *' 'tolower($1) ~ /(^|[^0-9])224([^0-9]|$)/ {print $2; exit}')
-  fi
+
+# Prefer robust D-Bus lookup via NetworkManager
+if command -v busctl >/dev/null 2>&1; then
+  log "Event action=$ACTION iface=$IFACE opt=$FND_OPT (D-Bus)"
+  for _try in 1 2 3; do
+    DEV_PATH=$(busctl --no-pager --system call org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager GetDeviceByIpIface s "$IFACE" 2>/dev/null | awk -F'"' '/\/org\/freedesktop\/NetworkManager\/Devices\//{print $2; exit}')
+    if [ -n "$DEV_PATH" ]; then
+      DHCP4_PATH=$(busctl --no-pager --system get-property org.freedesktop.NetworkManager "$DEV_PATH" org.freedesktop.NetworkManager.Device Dhcp4Config 2>/dev/null | awk -F'"' '/\/org\/freedesktop\/NetworkManager\/DHCP4Config\//{print $2; exit}')
+      if [ -n "$DHCP4_PATH" ] && [ "$DHCP4_PATH" != "/" ]; then
+        OPTS=$(busctl --no-pager --system get-property org.freedesktop.NetworkManager "$DHCP4_PATH" org.freedesktop.NetworkManager.DHCP4Config Options 2>/dev/null | tr '\n' ' ')
+        # Try numeric key first
+        VAL=$(printf '%s\n' "$OPTS" | awk -v k="$FND_OPT" '{
+          for (i=1;i<=NF;i++) {
+            if ($i == "\"" k "\"") {
+              for (j=i+1;j<=NF;j++) {
+                if ($j ~ /^\"/) { v=$j; sub(/^\"/, "", v); sub(/\"$/, "", v); gsub(/,$/, "", v); print v; exit }
+              }
+            }
+          }
+        }')
+        # Fallback: unknown_<num>
+        if [ -z "$VAL" ] && [ -n "$OPTS" ]; then
+          VAL=$(printf '%s\n' "$OPTS" | awk -v k="$FND_OPT" '{
+            tgt = "\"unknown_" k "\""
+            for (i=1;i<=NF;i++) {
+              if ($i == tgt) {
+                for (j=i+1;j<=NF;j++) {
+                  if ($j ~ /^\"/) { v=$j; sub(/^\"/, "", v); sub(/\"$/, "", v); gsub(/,$/, "", v); print v; exit }
+                }
+              }
+            }
+          }')
+        fi
+        # Fallback: option_<num>
+        if [ -z "$VAL" ] && [ -n "$OPTS" ]; then
+          VAL=$(printf '%s\n' "$OPTS" | awk -v k="$FND_OPT" '{
+            tgt = "\"option_" k "\""
+            for (i=1;i<=NF;i++) {
+              if ($i == tgt) {
+                for (j=i+1;j<=NF;j++) {
+                  if ($j ~ /^\"/) { v=$j; sub(/^\"/, "", v); sub(/\"$/, "", v); gsub(/,$/, "", v); print v; exit }
+                }
+              }
+            }
+          }')
+        fi
+        log "D-Bus Options[$FND_OPT]=$(printf '%s' "$VAL")"
+      fi
+    fi
+    [ -n "$VAL" ] && break
+    sleep 0.5
+  done
+fi
+
+# Fallback to nmcli if D-Bus did not yield a value
+if [ -z "$VAL" ] && command -v nmcli >/dev/null 2>&1; then
+  log "D-Bus empty; falling back to nmcli parsing"
+  for _try in 1 2 3; do
+    # machine-readable device properties
+    if [ -z "$VAL" ]; then
+      OPTS=$(nmcli -g IP4.DHCP.OPTION device show "$IFACE" 2>/dev/null || true)
+      [ -n "$OPTS" ] && VAL=$(printf '%s\n' "$OPTS" | extract_opt_n)
+      log "IP4.DHCP.OPTION dev: $(printf '%s' "$VAL")"
+    fi
+
+    # pretty device output
+    if [ -z "$VAL" ]; then
+      OPTS=$(nmcli device show "$IFACE" 2>/dev/null | sed -n 's/^[[:space:]]*IP4\.DHCP\.OPTION\[[^]]*\]:[[:space:]]*//p')
+      [ -n "$OPTS" ] && VAL=$(printf '%s\n' "$OPTS" | extract_opt_n)
+      log "pretty IP4.DHCP.OPTION: $(printf '%s' "$VAL")"
+    fi
+
+    # alternate property
+    if [ -z "$VAL" ]; then
+      OPTS=$(nmcli -g DHCP4.OPTION device show "$IFACE" 2>/dev/null || true)
+      [ -n "$OPTS" ] && VAL=$(printf '%s\n' "$OPTS" | extract_opt_n)
+      log "DHCP4.OPTION dev: $(printf '%s' "$VAL")"
+    fi
+
+    # active connection
+    if [ -z "$VAL" ]; then
+      UUID=$(nmcli -t -f UUID,DEVICE connection show --active 2>/dev/null | awk -F: -v d="$IFACE" '$2==d{print $1; exit}')
+      if [ -n "$UUID" ]; then
+        OPTS=$(nmcli -g DHCP4.OPTION connection show "$UUID" 2>/dev/null || true)
+        [ -n "$OPTS" ] && VAL=$(printf '%s\n' "$OPTS" | extract_opt_n)
+        log "DHCP4.OPTION conn $UUID: $(printf '%s' "$VAL")"
+      fi
+    fi
+
+    [ -n "$VAL" ] && break
+    sleep 0.5
+  done
+fi
+
+# Normalize potential hex to dotted IPv4
+if [ -n "$VAL" ]; then
+  VAL=$(maybe_convert_hex "$VAL")
 fi
 
 if [ -n "$VAL" ]; then
-  echo "$VAL" > "$FND_DHCP_IP_FILE".new && mv "$FND_DHCP_IP_FILE".new "$FND_DHCP_IP_FILE"
+  printf '%s\n' "$VAL" > "$FND_DHCP_IP_FILE".new && mv "$FND_DHCP_IP_FILE".new "$FND_DHCP_IP_FILE"
+  log "Wrote $FND_DHCP_IP_FILE with $VAL"
   systemctl kill -s SIGUSR1 open-friendly-net-detection-client.service 2>/dev/null || true
 else
   # On link down, remove stale value and notify service
   if [ "$ACTION" = "down" ] || [ "$ACTION" = "pre-down" ]; then
     rm -f "$FND_DHCP_IP_FILE" 2>/dev/null || true
+    log "Removed $FND_DHCP_IP_FILE due to $ACTION"
     systemctl kill -s SIGUSR1 open-friendly-net-detection-client.service 2>/dev/null || true
   fi
 fi
