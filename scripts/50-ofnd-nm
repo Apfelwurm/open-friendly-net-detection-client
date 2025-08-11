@@ -1,6 +1,6 @@
 #!/bin/sh
 # NetworkManager dispatcher script to capture custom DHCP option (default 224)
-# Installed to: /etc/NetworkManager/dispatcher.d/50-ofnd-nm
+# Installed to: /usr/lib/NetworkManager/dispatcher.d/50-ofnd-nm
 # Args: $1 = interface name, $2 = action
 
 IFACE="$1"

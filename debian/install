@@ -1,5 +1,5 @@
 packaging/open-friendly-net-detection-client.service lib/systemd/system/
 packaging/config.yaml etc/open-friendly-net-detection-client/
 src/open_friendly_net_detection_client/service.py usr/lib/open-friendly-net-detection-client/
-# Install NetworkManager dispatcher script for DHCP option extraction
-scripts/50-ofnd-nm etc/NetworkManager/dispatcher.d/
+# Install NetworkManager dispatcher script for DHCP option extraction (package-owned, not a conffile)
+scripts/50-ofnd-nm usr/lib/NetworkManager/dispatcher.d/

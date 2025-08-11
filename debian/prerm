@@ -12,6 +12,11 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     esac
 fi
 
+# Ask NetworkManager to reload dispatcher scripts on upgrade/remove
+if command -v nmcli >/dev/null 2>&1; then
+    nmcli general reload 2>/dev/null || true
+fi
+
 #DEBHELPER#
 
 exit 0

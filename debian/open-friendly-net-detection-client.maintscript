@@ -1,0 +1,1 @@
+rm_conffile /etc/NetworkManager/dispatcher.d/50-ofnd-nm 0.2.8~

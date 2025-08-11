@@ -1,3 +1,14 @@
+open-friendly-net-detection-client (0.2.8) unstable; urgency=medium
+
+  * Packaging: install NetworkManager dispatcher script under
+    /usr/lib/NetworkManager/dispatcher.d/ so it is package-owned and updated
+    on upgrades (instead of /etc which is a conffile).
+  * Postinst: remove legacy conffile at /etc/NetworkManager/dispatcher.d/50-ofnd-nm
+    using dpkg-maintscript-helper to avoid user prompts.
+  * Prerm: trigger NetworkManager reload to pick up updated dispatcher scripts.
+
+ -- Apfelwurm <Alexander@volzit.de>  Tue, 12 Aug 2025 10:20:00 +0000
+
 open-friendly-net-detection-client (0.2.7) unstable; urgency=medium
 
   * Dispatcher: prefer direct NetworkManager D-Bus (busctl) for DHCP option

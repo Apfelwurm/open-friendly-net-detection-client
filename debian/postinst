@@ -23,9 +23,13 @@ case "$1" in
     [ -d /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client ] && rmdir /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client 2>/dev/null || true
     [ -d  /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client ] && rmdir /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client 2>/dev/null || true
     [ -d /etc/dhcp/dhclient.d/fnd.conf ] && rmdir /etc/dhcp/dhclient.d/fnd.conf 2>/dev/null || true
-    # Ensure NM dispatcher script is executable
-    if [ -f /etc/NetworkManager/dispatcher.d/50-ofnd-nm ]; then
-      chmod 0755 /etc/NetworkManager/dispatcher.d/50-ofnd-nm || true
+    # Ensure NM dispatcher script is executable (package-owned path)
+    if [ -f /usr/lib/NetworkManager/dispatcher.d/50-ofnd-nm ]; then
+      chmod 0755 /usr/lib/NetworkManager/dispatcher.d/50-ofnd-nm || true
+    fi
+    # Ask NetworkManager to reload dispatcher scripts
+    if command -v nmcli >/dev/null 2>&1; then
+      nmcli general reload 2>/dev/null || true
     fi
     ;;
   *) ;;
