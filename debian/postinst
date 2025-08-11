@@ -13,9 +13,10 @@ if [ "$1" = "configure" ]; then
         /etc/dhcp/dhclient-exit-hooks.d/open-friendly-net-detection-client \
         /etc/dhcp/dhclient.d/fnd.conf/dhclient-fnd.conf \
         /etc/dhcp/dhclient.d/fnd.conf \
-        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client; do
+        /etc/dhcp/dhclient-exit-hooks.d/50-fnd-client
+    do
         if [ -e "$legacy" ]; then
-            rm -f "$legacy" 2>/dev/null || true
+            rm -f -- "$legacy" 2>/dev/null || true
         fi
     done
     # Remove now-empty legacy directory (ignore errors)
@@ -29,5 +30,17 @@ if [ "$1" = "configure" ]; then
 fi
 
 #DEBHELPER#
+
+# Ensure systemd service is enabled and started (or restarted on upgrade)
+if [ "$1" = "configure" ] && [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    # Enable (idempotent)
+    systemctl enable open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+    # If upgrading (old version present in $2) restart; else start if not active
+    if [ -n "$2" ]; then
+        systemctl try-restart open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+    else
+        systemctl start open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+    fi
+fi
 
 exit 0

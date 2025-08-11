@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Maintainer script: prerm
+# Stop service on remove / upgrade (systemd handles no-op if not running).
+
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    case "$1" in
+        remove|upgrade|deconfigure)
+            systemctl stop open-friendly-net-detection-client.service >/dev/null 2>&1 || true
+            ;;
+    esac
+fi
+
+#DEBHELPER#
+
+exit 0

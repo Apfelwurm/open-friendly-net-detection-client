@@ -1,3 +1,11 @@
+open-friendly-net-detection-client (0.2.4) unstable; urgency=medium
+
+  * Ensure systemd service enabled + started on fresh install, restarted on upgrade.
+  * Add prerm/postrm scripts to stop and disable service appropriately.
+  * Extend legacy cleanup list for mis-installed hook/option paths.
+
+ -- Apfelwurm <Alexander@volzit.de>  Mon, 11 Aug 2025 14:40:00 +0000
+
 open-friendly-net-detection-client (0.2.3) unstable; urgency=medium
 
   * Add purge-time cleanup of legacy misplaced hook/script paths.
