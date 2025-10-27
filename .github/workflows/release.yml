@@ -24,7 +24,7 @@ jobs:
         run: |
           debuild -us -uc
       - name: Capture artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
             name: debs
             path: "dist_debian/*.deb"
